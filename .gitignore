@@ -79,3 +79,7 @@ instance/
 .cache/
 *.swp
 *.swo
+
+# Ignore generated face recognition data (not part of the code)
+*.pkl
+stored_faces/
