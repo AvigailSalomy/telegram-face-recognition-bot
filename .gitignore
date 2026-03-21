@@ -83,3 +83,6 @@ instance/
 # Ignore generated face recognition data (not part of the code)
 *.pkl
 stored_faces/
+
+# Celebs dataset (large, not part of submission)
+celebs/

@@ -20,10 +20,15 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 FACES_DIR = Path("stored_faces")
 FACES_DATA_FILE = FACES_DIR / "faces_data.pkl"
 
+# Celeb faces paths
+CELEBS_DIR = Path("celebs")
+celeb_faces_cache = {}  # {celeb_name: {"encoding": encoding, "image_path": path}}
+
 # Conversation states
 WAITING_FOR_NAME = 1
 WAITING_FOR_ADD_IMAGE = 2
 WAITING_FOR_RECOGNIZE_IMAGE = 3
+WAITING_FOR_SIMILAR_CELEB_IMAGE = 4
 
 # Similarity threshold (distance below this = match)
 SIMILARITY_THRESHOLD = 0.6
@@ -105,10 +110,105 @@ def reset_all_faces():
         pass
 
 
+def load_celeb_faces():
+    """Load all valid celeb faces from the celebs folder.
+    
+    Each subfolder is a celeb name. All valid images (with exactly one face) are loaded.
+    Only loads if the cache is empty. Use this to initialize or reinitialize the cache.
+    """
+    global celeb_faces_cache
+    
+    # Only load if cache is empty (don't reload if already populated)
+    if celeb_faces_cache:
+        print(f"Celeb cache already loaded with {len(celeb_faces_cache)} celebs, skipping reload")
+        return celeb_faces_cache
+    
+    celeb_faces_cache = {}
+    
+    if not CELEBS_DIR.exists():
+        print(f"Celebs directory does not exist: {CELEBS_DIR}")
+        return celeb_faces_cache
+    
+    # Image extensions to look for
+    image_extensions = {'.jpg', '.jpeg', '.png'}
+    
+    # Iterate through each celeb subfolder
+    for celeb_folder in CELEBS_DIR.iterdir():
+        if celeb_folder.is_dir():
+            celeb_name = celeb_folder.name.replace('_', ' ').title()
+            
+            # Find all images in the celeb folder
+            celeb_images = [f for f in celeb_folder.iterdir() if f.suffix.lower() in image_extensions]
+            
+            if not celeb_images:
+                print(f"No images found for celeb: {celeb_name}")
+                continue
+            
+            # Load all valid images (exactly one face)
+            valid_images = []
+            for img_path in celeb_images:
+                try:
+                    image = face_recognition.load_image_file(img_path)
+                    encodings = face_recognition.face_encodings(image)
+                    
+                    # Only include images with exactly one face
+                    if len(encodings) == 1:
+                        valid_images.append({
+                            "encoding": encodings[0],
+                            "image_path": img_path
+                        })
+                    elif len(encodings) > 1:
+                        print(f"Skipping {img_path}: multiple faces found")
+                    else:
+                        print(f"Skipping {img_path}: no face found")
+                except Exception as e:
+                    print(f"Error loading {img_path}: {e}")
+            
+            if valid_images:
+                celeb_faces_cache[celeb_name] = valid_images
+                print(f"Loaded celeb: {celeb_name} with {len(valid_images)} valid images")
+            else:
+                print(f"No valid images for celeb: {celeb_name}")
+    
+    total_images = sum(len(v) for v in celeb_faces_cache.values())
+    print(f"Total celebs loaded: {len(celeb_faces_cache)} with {total_images} total images")
+    return celeb_faces_cache
+
+
+def find_most_similar_celeb(face_encoding):
+    """Find the most similar celeb to the given face encoding.
+    
+    Compares against ALL loaded celeb face encodings and returns the best match.
+    """
+    global celeb_faces_cache
+    
+    if not celeb_faces_cache:
+        load_celeb_faces()
+    
+    if not celeb_faces_cache:
+        return None, None, float('inf')
+    
+    best_celeb = None
+    best_image_path = None
+    best_distance = float('inf')
+    
+    # Compare against ALL celeb images
+    for celeb_name, celeb_images in celeb_faces_cache.items():
+        for celeb_data in celeb_images:
+            distance = face_recognition.face_distance([celeb_data["encoding"]], face_encoding)[0]
+            
+            if distance < best_distance:
+                best_distance = distance
+                best_celeb = celeb_name
+                best_image_path = celeb_data["image_path"]
+    
+    return best_celeb, best_image_path, best_distance
+
+
 def get_main_keyboard():
-    """Create the main keyboard with 3 buttons."""
+    """Create the main keyboard with 4 buttons."""
     keyboard = [
-        [KeyboardButton("Add face"), KeyboardButton("Recognize faces"), KeyboardButton("Reset faces")]
+        [KeyboardButton("Add face"), KeyboardButton("Recognize faces"), KeyboardButton("Similar celebs"), KeyboardButton("Reset faces")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -145,6 +245,24 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "Upload an image with at least one face and I will recognize who is in this image"
         )
         return WAITING_FOR_RECOGNIZE_IMAGE
+        
+    elif text == "Similar celebs":
+        # Load celeb faces only if cache is empty
+        if not celeb_faces_cache:
+            load_celeb_faces()
+        if not celeb_faces_cache:
+            await update.message.reply_text(
+                "No celeb faces available. Please check the celebs folder."
+            )
+            await update.message.reply_text(
+                "Choose an option from the main menu:",
+                reply_markup=get_main_keyboard()
+            )
+            return ConversationHandler.END
+        await update.message.reply_text(
+            "Upload me a picture of a single person and I will find which celebs are similar to that person"
+        )
+        return WAITING_FOR_SIMILAR_CELEB_IMAGE
         
     elif text == "Reset faces":
         reset_all_faces()
@@ -190,12 +308,14 @@ async def handle_add_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         encodings = face_recognition.face_encodings(image)
         
         if len(encodings) == 0:
+            temp_path.unlink(missing_ok=True)
             await update.message.reply_text(
                 "No face found in this image. Please send an image with a single face."
             )
             return WAITING_FOR_ADD_IMAGE
         
         if len(encodings) > 1:
+            temp_path.unlink(missing_ok=True)
             await update.message.reply_text(
                 "Multiple faces found in this image. Please send an image with a single face."
             )
@@ -208,6 +328,7 @@ async def handle_add_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception:
         traceback.print_exc()
+        temp_path.unlink(missing_ok=True)
         await update.message.reply_text(
             "Sorry, I couldn't process that image. Please try again."
         )
@@ -383,6 +504,99 @@ async def handle_recognize_image(update: Update, context: ContextTypes.DEFAULT_T
         return ConversationHandler.END
 
 
+async def handle_similar_celeb_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle image uploaded for finding similar celebs."""
+    if not update.message.photo:
+        await update.message.reply_text("Please send an image with a single face.")
+        return WAITING_FOR_SIMILAR_CELEB_IMAGE
+    
+    ensure_faces_dir()
+    
+    photo = update.message.photo[-1]
+    temp_path = None
+    
+    try:
+        temp_path = FACES_DIR / f"similar_celeb_{update.effective_user.id}.jpg"
+        await download_file_with_retry(context.bot, photo.file_id, temp_path)
+    except Exception:
+        traceback.print_exc()
+        await update.message.reply_text(
+            "Sorry, there was a network problem while downloading the image. Please try again.",
+            reply_markup=get_main_keyboard()
+        )
+        return ConversationHandler.END
+    
+    try:
+        image = face_recognition.load_image_file(temp_path)
+        encodings = face_recognition.face_encodings(image)
+        
+        if len(encodings) == 0:
+            temp_path.unlink(missing_ok=True)
+            await update.message.reply_text(
+                "No face found in this image. Please send an image with a single face."
+            )
+            return WAITING_FOR_SIMILAR_CELEB_IMAGE
+        
+        if len(encodings) > 1:
+            temp_path.unlink(missing_ok=True)
+            await update.message.reply_text(
+                "Multiple faces found in this image. Please send an image with a single face."
+            )
+            return WAITING_FOR_SIMILAR_CELEB_IMAGE
+        
+        # Find the most similar celeb
+        best_celeb, celeb_image_path, distance = find_most_similar_celeb(encodings[0])
+        
+        # Clean up temp file
+        temp_path.unlink(missing_ok=True)
+        
+        if best_celeb is None:
+            await update.message.reply_text(
+                "Sorry, I couldn't find any similar celebs.",
+                reply_markup=get_main_keyboard()
+            )
+            return ConversationHandler.END
+        
+        # Check if the best match is above the similarity threshold
+        # distance < threshold means good match (face_distance returns lower = more similar)
+        if distance >= SIMILARITY_THRESHOLD:
+            await update.message.reply_text(
+                "I couldn't find a similar celeb for this image.",
+                reply_markup=get_main_keyboard()
+            )
+            return ConversationHandler.END
+        
+        # Send the result with the celeb image
+        try:
+            with open(celeb_image_path, "rb") as celeb_photo:
+                await update.message.reply_photo(
+                    photo=celeb_photo,
+                    caption=f"The celeb that the person is most similar to is {best_celeb}"
+                )
+        except Exception as e:
+            print(f"Error sending celeb photo: {e}")
+            await update.message.reply_text(
+                f"The celeb that the person is most similar to is {best_celeb}"
+            )
+        
+        await update.message.reply_text(
+            "Choose an option from the main menu:",
+            reply_markup=get_main_keyboard()
+        )
+        
+        return ConversationHandler.END
+        
+    except Exception:
+        traceback.print_exc()
+        if temp_path:
+            temp_path.unlink(missing_ok=True)
+        await update.message.reply_text(
+            "Sorry, I couldn't process that image. Please try again.",
+            reply_markup=get_main_keyboard()
+        )
+        return ConversationHandler.END
+
+
 def main():
     """Run the bot."""
     load_known_faces()
@@ -403,6 +617,10 @@ def main():
             ],
             WAITING_FOR_RECOGNIZE_IMAGE: [
                 MessageHandler(filters.PHOTO, handle_recognize_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)
+            ],
+            WAITING_FOR_SIMILAR_CELEB_IMAGE: [
+                MessageHandler(filters.PHOTO, handle_similar_celeb_image),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)
             ],
         },
