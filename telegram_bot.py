@@ -277,7 +277,7 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
     else:
         await update.message.reply_text(
-            "Please choose an option from the menu:",
+            "Please choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
         return ConversationHandler.END
