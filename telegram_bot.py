@@ -21,7 +21,7 @@ FACES_DIR = Path("stored_faces")
 FACES_DATA_FILE = FACES_DIR / "faces_data.pkl"
 
 # Celeb faces paths
-CELEBS_DIR = Path("celebs")
+CELEBS_DIR = Path("celebs_images")
 celeb_faces_cache = {}  # {celeb_name: {"encoding": encoding, "image_path": path}}
 
 # Conversation states
@@ -111,9 +111,10 @@ def reset_all_faces():
 
 
 def load_celeb_faces():
-    """Load all valid celeb faces from the celebs folder.
+    """Load all valid celeb faces from the celebs_images folder.
     
     Each subfolder is a celeb name. All valid images (with exactly one face) are loaded.
+    Uses persistent caching to avoid recomputing encodings on subsequent runs.
     Only loads if the cache is empty. Use this to initialize or reinitialize the cache.
     """
     global celeb_faces_cache
@@ -129,8 +130,26 @@ def load_celeb_faces():
         print(f"Celebs directory does not exist: {CELEBS_DIR}")
         return celeb_faces_cache
     
+    # Persistent cache file path
+    cache_file = FACES_DIR / "celeb_encodings_cache.pkl"
+    
+    # Try to load from persistent cache
+    cached_data = {}
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'rb') as f:
+                cached_data = pickle.load(f)
+            print(f"Loaded {len(cached_data)} celebs from persistent cache")
+        except Exception as e:
+            print(f"Could not load cache file: {e}")
+            cached_data = {}
+    
     # Image extensions to look for
     image_extensions = {'.jpg', '.jpeg', '.png'}
+    
+    # Track modified entries for cache update
+    updated_cache = {}
+    new_encodings_count = 0
     
     # Iterate through each celeb subfolder
     for celeb_folder in CELEBS_DIR.iterdir():
@@ -148,19 +167,44 @@ def load_celeb_faces():
             valid_images = []
             for img_path in celeb_images:
                 try:
-                    image = face_recognition.load_image_file(img_path)
-                    encodings = face_recognition.face_encodings(image)
+                    # Check if we have a valid cached entry for this image
+                    img_key = str(img_path)
+                    current_mtime = img_path.stat().st_mtime
                     
-                    # Only include images with exactly one face
-                    if len(encodings) == 1:
+                    cached_entry = cached_data.get(celeb_name, {}).get(img_key)
+                    use_cached = False
+                    
+                    if cached_entry and cached_entry.get('mtime') == current_mtime:
+                        # Use cached encoding if mtime matches
                         valid_images.append({
-                            "encoding": encodings[0],
+                            "encoding": cached_entry['encoding'],
                             "image_path": img_path
                         })
-                    elif len(encodings) > 1:
-                        print(f"Skipping {img_path}: multiple faces found")
-                    else:
-                        print(f"Skipping {img_path}: no face found")
+                        use_cached = True
+                    
+                    if not use_cached:
+                        # Compute encoding
+                        image = face_recognition.load_image_file(img_path)
+                        encodings = face_recognition.face_encodings(image)
+                        
+                        # Only include images with exactly one face
+                        if len(encodings) == 1:
+                            valid_images.append({
+                                "encoding": encodings[0],
+                                "image_path": img_path
+                            })
+                            new_encodings_count += 1
+                            # Update cache entry
+                            if celeb_name not in updated_cache:
+                                updated_cache[celeb_name] = {}
+                            updated_cache[celeb_name][img_key] = {
+                                'encoding': encodings[0],
+                                'mtime': current_mtime
+                            }
+                        elif len(encodings) > 1:
+                            print(f"Skipping {img_path}: multiple faces found")
+                        else:
+                            print(f"Skipping {img_path}: no face found")
                 except Exception as e:
                     print(f"Error loading {img_path}: {e}")
             
@@ -170,8 +214,29 @@ def load_celeb_faces():
             else:
                 print(f"No valid images for celeb: {celeb_name}")
     
+    # Save updated cache
+    if updated_cache:
+        # Merge with existing cached data (preserve unchanged entries)
+        for celeb_name, img_entries in cached_data.items():
+            if celeb_name not in updated_cache:
+                updated_cache[celeb_name] = img_entries
+            else:
+                for img_key, entry in img_entries.items():
+                    if img_key not in updated_cache[celeb_name]:
+                        updated_cache[celeb_name][img_key] = entry
+        
+        try:
+            cache_file.parent.mkdir(exist_ok=True)
+            with open(cache_file, 'wb') as f:
+                pickle.dump(updated_cache, f)
+            print(f"Saved {len(updated_cache)} celebs to persistent cache")
+        except Exception as e:
+            print(f"Could not save cache file: {e}")
+    
     total_images = sum(len(v) for v in celeb_faces_cache.values())
     print(f"Total celebs loaded: {len(celeb_faces_cache)} with {total_images} total images")
+    if new_encodings_count > 0:
+        print(f"Computed {new_encodings_count} new encodings")
     return celeb_faces_cache
 
 
@@ -252,7 +317,7 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             load_celeb_faces()
         if not celeb_faces_cache:
             await update.message.reply_text(
-                "No celeb faces available. Please check the celebs folder."
+                "No celeb faces available. Please check the celebs_images folder."
             )
             await update.message.reply_text(
                 "Choose an option from the main menu:",

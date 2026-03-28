@@ -86,3 +86,8 @@ stored_faces/
 
 # Celebs dataset (large, not part of submission)
 celebs/
+celebs_images/
+
+# Generated face map outputs
+face_map_output.*
+temp/
