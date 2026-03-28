@@ -33,6 +33,7 @@ WAITING_FOR_ADD_IMAGE = 2
 WAITING_FOR_RECOGNIZE_IMAGE = 3
 WAITING_FOR_SIMILAR_CELEB_IMAGE = 4
 WAITING_FOR_GUESS = 5
+MAIN_MENU = 6
 
 # Similarity threshold (distance below this = match)
 SIMILARITY_THRESHOLD = 0.6
@@ -409,9 +410,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /start command and show the custom keyboard."""
     load_known_faces()
     await update.message.reply_text(
-        "Welcome to the Face Recognition Bot!\nChoose an option from the main menu:",
+        "👋 Welcome to the Face Recognition Bot!\n👇 Choose an option from the main menu:",
         reply_markup=get_main_keyboard()
     )
+    return MAIN_MENU
 
 
 async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -419,22 +421,22 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = update.message.text
     
     if text == "Add face":
-        await update.message.reply_text("Upload an image with a single face")
+        await update.message.reply_text("📸 Upload an image with a single face")
         return WAITING_FOR_ADD_IMAGE
         
     elif text == "Recognize faces":
         load_known_faces()
         if not known_faces:
             await update.message.reply_text(
-                "No faces stored yet. Please add a face first."
+                "🚫 No faces stored yet. Please add a face first."
             )
             await update.message.reply_text(
-                "Choose an option from the main menu:",
+                "👇 Choose an option from the main menu:",
                 reply_markup=get_main_keyboard()
             )
-            return ConversationHandler.END
+            return MAIN_MENU
         await update.message.reply_text(
-            "Upload an image with at least one face and I will recognize who is in this image"
+            "👁️ Upload an image with at least one face and I will recognize who is in this image"
         )
         return WAITING_FOR_RECOGNIZE_IMAGE
         
@@ -444,15 +446,15 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             load_celeb_faces()
         if not celeb_faces_cache:
             await update.message.reply_text(
-                "No celeb faces available. Please check the celebs_images folder."
+                "🚫 No celeb faces available. Please check the celebs_images folder."
             )
             await update.message.reply_text(
-                "Choose an option from the main menu:",
+                "👇 Choose an option from the main menu:",
                 reply_markup=get_main_keyboard()
             )
-            return ConversationHandler.END
+            return MAIN_MENU
         await update.message.reply_text(
-            "Upload me a picture of a single person and I will find which celebs are similar to that person"
+            "🌟 Upload me a picture of a single person and I will find which celebs are similar to that person"
         )
         return WAITING_FOR_SIMILAR_CELEB_IMAGE
         
@@ -462,13 +464,13 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             load_celeb_faces()
         if not celeb_faces_cache:
             await update.message.reply_text(
-                "No celeb faces available. Please check the celebs_images folder."
+                "🚫 No celeb faces available. Please check the celebs_images folder."
             )
             await update.message.reply_text(
-                "Choose an option from the main menu:",
+                "👇 Choose an option from the main menu:",
                 reply_markup=get_main_keyboard()
             )
-            return ConversationHandler.END
+            return MAIN_MENU
         
         # Start the guessing game
         import random
@@ -509,14 +511,14 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("I see a face, but who is it? Pick one!")
         
         await update.message.reply_text(
-            "Choose your answer:",
+            "👇 Choose your answer:",
             reply_markup=reply_markup
         )
         
         return WAITING_FOR_GUESS
         
     elif text == "Map":
-        await update.message.reply_text("Generating face similarity map...")
+        await update.message.reply_text("🗺️ Generating face similarity map...")
         
         # Generate the map using the original face_map logic
         ensure_faces_dir()
@@ -571,38 +573,38 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             print(f"Error generating face map: {e}")
             traceback.print_exc()
             await update.message.reply_text(
-                "Sorry, an error occurred while generating the map."
+                "⚠️ Sorry, an error occurred while generating the map."
             )
         
         await update.message.reply_text(
-            "Choose an option from the main menu:",
+            "👇 Choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
-        return ConversationHandler.END
+        return MAIN_MENU
         
     elif text == "Reset faces":
         reset_all_faces()
         await update.message.reply_text(
-            "All faces have been deleted. The bot now knows no one."
+            "♻️ All faces have been deleted. The bot now knows no one."
         )
         await update.message.reply_text(
-            "Choose an option from the main menu:",
+            "👇 Choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
-        return ConversationHandler.END
+        return MAIN_MENU
         
     else:
         await update.message.reply_text(
-            "Please choose an option from the main menu:",
+            "👇 Choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
-        return ConversationHandler.END
+        return MAIN_MENU
 
 
 async def handle_add_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle image uploaded for adding a face."""
     if not update.message.photo:
-        await update.message.reply_text("Please send an image with a single face.")
+        await update.message.reply_text("📸 Please send an image with a single face.")
         return WAITING_FOR_ADD_IMAGE
     
     ensure_faces_dir()
@@ -615,9 +617,9 @@ async def handle_add_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         traceback.print_exc()
         await update.message.reply_text(
-            "Sorry, there was a network problem while downloading the image. Please try again."
+            "⚠️ Sorry, there was a network problem while downloading the image. Please try again."
         )
-        return ConversationHandler.END
+        return MAIN_MENU
     
     try:
         image = face_recognition.load_image_file(temp_path)
@@ -628,18 +630,18 @@ async def handle_add_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(encodings) == 0:
             temp_path.unlink(missing_ok=True)
             await update.message.reply_text(
-                "No face found in this image. Please send an image with a single face."
+                "❌ No face found in this image. Please send an image with a single face."
             )
             return WAITING_FOR_ADD_IMAGE
-        
+
         if len(encodings) > 1:
             temp_path.unlink(missing_ok=True)
             await update.message.reply_text(
-                "Multiple faces found in this image. Please send an image with a single face."
+                "❌ Multiple faces found in this image. Please send an image with a single face."
             )
             return WAITING_FOR_ADD_IMAGE
-        
-        await update.message.reply_text("Great. What's the name of the person in this image?")
+
+        await update.message.reply_text("✅ Great. What's the name of the person in this image?")
         context.user_data['temp_encoding'] = encodings[0]
         context.user_data['temp_image_path'] = temp_path
         context.user_data['temp_face_location'] = face_locations[0]  # Store face location for cropping
@@ -649,36 +651,125 @@ async def handle_add_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         traceback.print_exc()
         temp_path.unlink(missing_ok=True)
         await update.message.reply_text(
-            "Sorry, I couldn't process that image. Please try again."
+            "⚠️ Sorry, I couldn't process that image. Please try again."
         )
-        return ConversationHandler.END
+        return MAIN_MENU
+
+
+async def handle_add_image_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle plain text in WAITING_FOR_ADD_IMAGE."""
+    await update.message.reply_text("📸 Please upload an image with a single face.")
+    return WAITING_FOR_ADD_IMAGE
+
+
+async def handle_recognize_image_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle plain text in WAITING_FOR_RECOGNIZE_IMAGE."""
+    await update.message.reply_text("👁️ Please upload an image with at least one face.")
+    return WAITING_FOR_RECOGNIZE_IMAGE
 
 
 async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle name input after face image is uploaded."""
     name = update.message.text.strip()
-    
-    if not name:
-        await update.message.reply_text("Please enter a valid name.")
+    normalized_name = name.strip().lower()
+
+    # 1. Validate name: must be at least 2 characters and contain at least one letter
+    if len(name) < 2 or not any(c.isalpha() for c in name):
+        await update.message.reply_text("✏️ Please enter a valid name (at least 2 characters and must include letters).")
         return WAITING_FOR_NAME
-    
+
     encoding = context.user_data.get('temp_encoding')
     temp_path = context.user_data.get('temp_image_path')
     face_location = context.user_data.get('temp_face_location')
-    
+
     if encoding is None or temp_path is None:
         await update.message.reply_text(
-            "Something went wrong. Please start again by pressing 'Add face'.",
+            "⚠️ Something went wrong. Please start again by pressing 'Add face'.",
             reply_markup=get_main_keyboard()
         )
         return ConversationHandler.END
-    
+
     global known_faces
+
+    # 2. Check if this face already exists in known_faces
+    existing_name = None
+    for known_name, known_encoding in known_faces.items():
+        distance = face_recognition.face_distance([known_encoding], encoding)[0]
+        if distance < SIMILARITY_THRESHOLD:
+            existing_name = known_name
+            break
+
+    if existing_name is not None:
+        # Face already exists
+        if existing_name.strip().lower() == normalized_name:
+            # 3. Same face, same name
+            await update.message.reply_text(f"✅ I already know this face as {existing_name}.")
+            # Clean up temp file
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            context.user_data.pop('temp_encoding', None)
+            context.user_data.pop('temp_image_path', None)
+            context.user_data.pop('temp_face_location', None)
+            await update.message.reply_text(
+                "👇 Choose an option from the main menu:",
+                reply_markup=get_main_keyboard()
+            )
+            return MAIN_MENU
+        else:
+            # 4. Same face, different name - update the name
+            old_name = existing_name
+            known_faces[name] = known_faces.pop(old_name)
+            
+            if not save_known_faces():
+                await update.message.reply_text(
+                    "⚠️ Sorry, I couldn't update the face. Please try again.",
+                    reply_markup=get_main_keyboard()
+                )
+                context.user_data.pop('temp_encoding', None)
+                context.user_data.pop('temp_image_path', None)
+                context.user_data.pop('temp_face_location', None)
+                if temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
+                return MAIN_MENU
+            
+            # Update the face image file name
+            ensure_faces_dir()
+            old_safe_name = sanitize_filename(old_name)
+            old_face_image_path = FACES_DIR / f"{old_safe_name}.png"
+            new_safe_name = sanitize_filename(name)
+            new_face_image_path = FACES_DIR / f"{new_safe_name}.png"
+            
+            if old_face_image_path.exists():
+                old_face_image_path.rename(new_face_image_path)
+            
+            # Clean up temp file
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            
+            context.user_data.pop('temp_encoding', None)
+            context.user_data.pop('temp_image_path', None)
+            context.user_data.pop('temp_face_location', None)
+            
+            await update.message.reply_text(f"✅ This face already exists as {old_name}. I updated the name to {name}.")
+            await update.message.reply_text(
+                "👇 Choose an option from the main menu:",
+                reply_markup=get_main_keyboard()
+            )
+            return MAIN_MENU
+
+    # Face is new - check if name already exists
+    normalized_existing = {existing.strip().lower(): existing for existing in known_faces.keys()}
+    if normalized_name in normalized_existing:
+        # 5. Different face + existing name
+        await update.message.reply_text("❗ This name already exists. Please choose a different name.")
+        return WAITING_FOR_NAME
+
+    # 6. New face + new valid name - save normally
     known_faces[name] = encoding
-    
+
     if not save_known_faces():
         await update.message.reply_text(
-            "Sorry, I couldn't save the face. Please try again.",
+            "⚠️ Sorry, I couldn't save the face. Please try again.",
             reply_markup=get_main_keyboard()
         )
         context.user_data.pop('temp_encoding', None)
@@ -686,8 +777,8 @@ async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop('temp_face_location', None)
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
-        return ConversationHandler.END
-    
+        return MAIN_MENU
+
     ensure_faces_dir()
     safe_name = sanitize_filename(name)
     face_image_path = FACES_DIR / f"{safe_name}.png"
@@ -733,12 +824,12 @@ async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('temp_image_path', None)
     context.user_data.pop('temp_face_location', None)
     
-    await update.message.reply_text("Great. I will now remember this face")
+    await update.message.reply_text("✅ Great! I will now remember this face")
     await update.message.reply_text(
-        "Choose an option from the main menu:",
+        "👇 Choose an option from the main menu:",
         reply_markup=get_main_keyboard()
     )
-    return ConversationHandler.END
+    return MAIN_MENU
 
 
 async def handle_recognize_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -746,7 +837,7 @@ async def handle_recognize_image(update: Update, context: ContextTypes.DEFAULT_T
     load_known_faces()
     
     if not update.message.photo:
-        await update.message.reply_text("Please send an image with at least one face.")
+        await update.message.reply_text("👁️ Please send an image with at least one face.")
         return WAITING_FOR_RECOGNIZE_IMAGE
     
     ensure_faces_dir()
@@ -759,7 +850,7 @@ async def handle_recognize_image(update: Update, context: ContextTypes.DEFAULT_T
     except Exception:
         traceback.print_exc()
         await update.message.reply_text(
-            "Sorry, there was a network problem while downloading the image. Please try again.",
+            "⚠️ Sorry, there was a network problem while downloading the image. Please try again.",
             reply_markup=get_main_keyboard()
         )
         return ConversationHandler.END
@@ -771,11 +862,11 @@ async def handle_recognize_image(update: Update, context: ContextTypes.DEFAULT_T
         
         if not face_encodings:
             await update.message.reply_text(
-                "I don't recognize anyone in this image",
+                "❌ I don't recognize anyone in this image.",
                 reply_markup=get_main_keyboard()
             )
             temp_path.unlink(missing_ok=True)
-            return ConversationHandler.END
+            return MAIN_MENU
         
         pil_image = Image.fromarray(image)
         draw = ImageDraw.Draw(pil_image)
@@ -834,7 +925,7 @@ async def handle_recognize_image(update: Update, context: ContextTypes.DEFAULT_T
             else:
                 message = f"I found {len(face_locations)} faces in this image and the people are {names_str}"
         else:
-            message = "I don't recognize anyone in this image"
+            message = "❌ I don't recognize anyone in this image."
         
         with open(output_path, "rb") as photo_file:
             await update.message.reply_photo(
@@ -843,28 +934,28 @@ async def handle_recognize_image(update: Update, context: ContextTypes.DEFAULT_T
             )
         
         await update.message.reply_text(
-            "Choose an option from the main menu:",
+            "👇 Choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
         
         temp_path.unlink(missing_ok=True)
         output_path.unlink(missing_ok=True)
-        return ConversationHandler.END
+        return MAIN_MENU
         
     except Exception:
         traceback.print_exc()
         await update.message.reply_text(
-            "Sorry, I couldn't process that image. Please try again.",
+            "⚠️ Sorry, I couldn't process that image. Please try again.",
             reply_markup=get_main_keyboard()
         )
         temp_path.unlink(missing_ok=True)
-        return ConversationHandler.END
+        return MAIN_MENU
 
 
 async def handle_similar_celeb_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle image uploaded for finding similar celebs."""
     if not update.message.photo:
-        await update.message.reply_text("Please send an image with a single face.")
+        await update.message.reply_text("📸 Please send an image with a single face.")
         return WAITING_FOR_SIMILAR_CELEB_IMAGE
     
     ensure_faces_dir()
@@ -878,7 +969,7 @@ async def handle_similar_celeb_image(update: Update, context: ContextTypes.DEFAU
     except Exception:
         traceback.print_exc()
         await update.message.reply_text(
-            "Sorry, there was a network problem while downloading the image. Please try again.",
+            "⚠️ Sorry, there was a network problem while downloading the image. Please try again.",
             reply_markup=get_main_keyboard()
         )
         return ConversationHandler.END
@@ -890,17 +981,17 @@ async def handle_similar_celeb_image(update: Update, context: ContextTypes.DEFAU
         if len(encodings) == 0:
             temp_path.unlink(missing_ok=True)
             await update.message.reply_text(
-                "No face found in this image. Please send an image with a single face."
+                "❌ No face found in this image. Please send an image with a single face."
             )
             return WAITING_FOR_SIMILAR_CELEB_IMAGE
-        
+
         if len(encodings) > 1:
             temp_path.unlink(missing_ok=True)
             await update.message.reply_text(
-                "Multiple faces found in this image. Please send an image with a single face."
+                "❌ Multiple faces found in this image. Please send an image with a single face."
             )
             return WAITING_FOR_SIMILAR_CELEB_IMAGE
-        
+
         # Find the most similar celeb
         best_celeb, celeb_image_path, distance = find_most_similar_celeb(encodings[0])
         
@@ -909,7 +1000,7 @@ async def handle_similar_celeb_image(update: Update, context: ContextTypes.DEFAU
         
         if best_celeb is None:
             await update.message.reply_text(
-                "Sorry, I couldn't find any similar celebs.",
+                "⚠️ Sorry, I couldn't find any similar celebs.",
                 reply_markup=get_main_keyboard()
             )
             return ConversationHandler.END
@@ -918,7 +1009,7 @@ async def handle_similar_celeb_image(update: Update, context: ContextTypes.DEFAU
         # distance < threshold means good match (face_distance returns lower = more similar)
         if distance >= SIMILARITY_THRESHOLD:
             await update.message.reply_text(
-                "I couldn't find a similar celeb for this image.",
+                "❌ I couldn't find a similar celeb for this image.",
                 reply_markup=get_main_keyboard()
             )
             return ConversationHandler.END
@@ -937,21 +1028,21 @@ async def handle_similar_celeb_image(update: Update, context: ContextTypes.DEFAU
             )
         
         await update.message.reply_text(
-            "Choose an option from the main menu:",
+            "👇 Choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
         
-        return ConversationHandler.END
+        return MAIN_MENU
         
     except Exception:
         traceback.print_exc()
         if temp_path:
             temp_path.unlink(missing_ok=True)
         await update.message.reply_text(
-            "Sorry, I couldn't process that image. Please try again.",
+            "⚠️ Sorry, I couldn't process that image. Please try again.",
             reply_markup=get_main_keyboard()
         )
-        return ConversationHandler.END
+        return MAIN_MENU
 
 
 async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -961,10 +1052,10 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if user_id not in guess_the_celeb_games:
         await update.message.reply_text(
-            "No active game. Choose an option from the main menu:",
+            "No active game. 👇 Choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
-        return ConversationHandler.END
+        return MAIN_MENU
     
     game = guess_the_celeb_games[user_id]
     correct_name = game["celeb_name"]
@@ -989,10 +1080,10 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del guess_the_celeb_games[user_id]
         
         await update.message.reply_text(
-            "Choose an option from the main menu:",
+            "👇 Choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
-        return ConversationHandler.END
+        return MAIN_MENU
     
     # Wrong guess
     if stage < 3:
@@ -1035,7 +1126,7 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Stage {next_stage}!")
         
         await update.message.reply_text(
-            "Choose your answer:",
+            "👇 Choose your answer:",
             reply_markup=reply_markup
         )
         
@@ -1062,7 +1153,16 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Choose an option from the main menu:",
             reply_markup=get_main_keyboard()
         )
-        return ConversationHandler.END
+        return MAIN_MENU
+
+
+async def invalid_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle invalid inputs by showing the main menu."""
+    await update.message.reply_text(
+        "👇 Choose an option from the main menu:",
+        reply_markup=get_main_keyboard()
+    )
+    return MAIN_MENU
 
 
 def main():
@@ -1076,23 +1176,32 @@ def main():
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)
         ],
         states={
+            MAIN_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice),
+                MessageHandler(filters.ALL, invalid_input_handler)
+            ],
             WAITING_FOR_ADD_IMAGE: [
                 MessageHandler(filters.PHOTO, handle_add_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_image_text),
+                MessageHandler(filters.ALL, invalid_input_handler)
             ],
             WAITING_FOR_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name_input)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name_input),
+                MessageHandler(filters.ALL, invalid_input_handler)
             ],
             WAITING_FOR_RECOGNIZE_IMAGE: [
                 MessageHandler(filters.PHOTO, handle_recognize_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recognize_image_text),
+                MessageHandler(filters.ALL, invalid_input_handler)
             ],
             WAITING_FOR_SIMILAR_CELEB_IMAGE: [
                 MessageHandler(filters.PHOTO, handle_similar_celeb_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_choice),
+                MessageHandler(filters.ALL, invalid_input_handler)
             ],
             WAITING_FOR_GUESS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess),
+                MessageHandler(filters.ALL, invalid_input_handler)
             ],
         },
         fallbacks=[],
@@ -1106,3 +1215,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
