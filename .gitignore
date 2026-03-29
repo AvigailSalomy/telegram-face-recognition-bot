@@ -90,4 +90,13 @@ celebs_images/
 
 # Generated face map outputs
 face_map_output.*
+cached_face_map.png
+
+
+# Images
+*.png
+*.jpg
+*.jpeg
+
+# Temp files
 temp/
