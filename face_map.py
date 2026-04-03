@@ -17,6 +17,7 @@ Can be imported as a module:
 
 import hashlib
 import pickle
+import re
 import sys
 import time
 from pathlib import Path
@@ -55,15 +56,6 @@ MAP_CACHE_FILE = "stored_faces/map_cache.pkl"
 # Global storage
 known_faces = {}
 celeb_faces_cache = {}
-
-
-def _compute_file_hash(file_path: Path) -> str:
-    """Compute a quick hash based on file path and modification time."""
-    try:
-        mtime = file_path.stat().st_mtime
-        return f"{file_path}:{mtime}"
-    except Exception:
-        return str(file_path)
 
 
 def _compute_faces_hash(known_faces: dict, celeb_faces_cache: dict) -> str:
@@ -151,7 +143,7 @@ def load_celeb_faces_cached():
                                     })
                                     cache_hits += 1
                                     continue
-                        except Exception:
+                        except Exception as e:
                             pass
                         # Cache stale (file modified or encoding invalid)
                         cache_stale += 1
@@ -165,8 +157,7 @@ def load_celeb_faces_cached():
                         cache[cache_key] = {
                             "encoding": encodings[0],
                             "mtime": mtime,
-                            "celeb_name": celeb_name,
-                            "path": str(img_path)
+                            "celeb_name": celeb_name
                         }
                         valid_images.append({
                             "encoding": encodings[0],
@@ -180,16 +171,14 @@ def load_celeb_faces_cached():
                         cache[cache_key] = {
                             "encoding": None,
                             "mtime": img_path.stat().st_mtime,
-                            "celeb_name": celeb_name,
-                            "path": str(img_path)
+                            "celeb_name": celeb_name
                         }
                     else:
                         print(f"Skipping {img_path}: no face found")
                         cache[cache_key] = {
                             "encoding": None,
                             "mtime": img_path.stat().st_mtime,
-                            "celeb_name": celeb_name,
-                            "path": str(img_path)
+                            "celeb_name": celeb_name
                         }
 
                 except Exception as e:
@@ -249,29 +238,18 @@ def load_known_faces():
 
             # Load image paths for known faces
             faces_dir = Path(FACES_DATA_FILE).parent
-            # Also check legacy faces directory
-            legacy_faces_dir = Path("faces")
 
             for name in known_faces.keys():
                 safe_name = sanitize_filename(name)
                 found = False
 
-                # Try stored_faces directory first
+                # Try stored_faces directory
                 for ext in ['.png', '.jpg', '.jpeg']:
                     img_path = faces_dir / f"{safe_name}{ext}"
                     if img_path.exists():
                         known_face_images[name] = img_path
                         found = True
                         break
-
-                # Try legacy faces directory
-                if not found:
-                    for ext in ['.png', '.jpg', '.jpeg']:
-                        img_path = legacy_faces_dir / f"{safe_name}{ext}"
-                        if img_path.exists():
-                            known_face_images[name] = img_path
-                            found = True
-                            break
 
                 # Try original filename without sanitization
                 if not found:
@@ -281,9 +259,6 @@ def load_known_faces():
                             known_face_images[name] = img_path
                             found = True
                             break
-
-                if not found:
-                    print(f"[DEBUG] Could not find image for user: {name}")
         else:
             print("No known faces file found, starting with empty known faces")
 
@@ -293,9 +268,9 @@ def load_known_faces():
 
     return known_faces, known_face_images
 
+
 def sanitize_filename(name: str) -> str:
     """Sanitize name for use in filename - supports non-English characters."""
-    import re
     # Keep alphanumeric, spaces, and common characters from any language
     cleaned = re.sub(r'[^\w\s]', '', name).strip()
     # Replace spaces with underscores
@@ -305,10 +280,6 @@ def sanitize_filename(name: str) -> str:
         result = f"person_{abs(hash(name)) % 100000}"
     return result
 
-
-def load_celeb_faces():
-    """Wrapper that uses cached version."""
-    return load_celeb_faces_cached()
 
 
 def create_face_map(known_faces, celeb_faces_cache, known_face_images=None):
@@ -796,7 +767,7 @@ def generate_and_save_map(output_png_path: str = "face_map_output.png") -> bool:
     stage_start = time.time()
     known_faces_data = load_known_faces()  # Returns (known_faces, known_face_images)
     known_faces, known_face_images = known_faces_data
-    load_celeb_faces()
+    load_celeb_faces_cached()
     stage_time = time.time() - stage_start
     print(f"[1] Face loading completed in {stage_time:.2f}s")
 
@@ -812,17 +783,14 @@ def generate_and_save_map(output_png_path: str = "face_map_output.png") -> bool:
 
     # Step 2: Check map cache
     faces_hash = _compute_faces_hash(known_faces, celeb_faces_cache)
-    print(f"[MAP CACHE DEBUG] Computed hash: {faces_hash[:16]}...")
     
     map_cache = {}
     if Path(MAP_CACHE_FILE).exists():
         try:
             with open(MAP_CACHE_FILE, 'rb') as f:
                 map_cache = pickle.load(f)
-            print(f"[MAP CACHE DEBUG] Cache hash: {map_cache.get('hash', 'none')[:16] if map_cache.get('hash') else 'none'}...")
-            print(f"[MAP CACHE DEBUG] Cache PNG: {map_cache.get('png_path', 'none')}")
         except Exception as e:
-            print(f"[MAP CACHE DEBUG] Could not load cache: {e}")
+            pass
     
     output_path = Path(output_png_path)
     # If hash matches AND the cached PNG exists, skip all generation
@@ -889,76 +857,4 @@ def generate_and_save_map(output_png_path: str = "face_map_output.png") -> bool:
     return True
 
 
-def main():
-    total_start = time.time()
-
-    print("=" * 50)
-    print("Face Map Debug Tool")
-    print("=" * 50)
-
-    # Step 1: Load all face data
-    print("\n[1] Loading face data...")
-    stage_start = time.time()
-    known_faces_data = load_known_faces()  # Returns (known_faces, known_face_images)
-    global known_faces
-    known_faces, known_face_images = known_faces_data
-    load_celeb_faces()
-    stage_time = time.time() - stage_start
-    print(f"[1] Face loading completed in {stage_time:.2f}s")
-
-    # Step 2: Check if we have data
-    total_known = len(known_faces)
-    total_celeb = sum(len(v) for v in celeb_faces_cache.values())
-
-    if total_known == 0 and total_celeb == 0:
-        print("\nNo faces found! Please add faces first.")
-        print("  - Add known faces using the Telegram bot")
-        print("  - Add celeb images in the 'celebs_images' folder")
-        sys.exit(1)
-
-    # Step 3: Create the face map using TSNE
-    print("\n[2] Creating face map with TSNE...")
-    stage_start = time.time()
-    result = create_face_map(known_faces, celeb_faces_cache, known_face_images)
-    stage_time = time.time() - stage_start
-    print(f"[2] TSNE completed in {stage_time:.2f}s")
-
-    if result is None:
-        print("Failed to create face map")
-        sys.exit(1)
-
-    embeddings_2d, labels, image_paths, sources, celeb_names = result
-
-    # Step 4: Plot and display
-    print("\n[3] Displaying face map...")
-    fig = plot_face_map(embeddings_2d, labels, image_paths, sources, celeb_names)
-
-    # Force a draw to ensure all artists are rendered before saving
-    fig.canvas.draw()
-
-    # Save HIGH-RESOLUTION PNG and PDF for zooming/detail viewing
-    png_filename = "face_map_output.png"
-    pdf_filename = "face_map_output.pdf"
-    print(f"\n[Saving] Saving high-resolution files...")
-    print(f"  - PNG at 200 DPI: {png_filename}")
-    print(f"  - PDF vector: {pdf_filename}")
-
-    # PNG with high DPI - do NOT use bbox_inches='tight' with AnnotationBbox (causes blank images)
-    # Use explicit figure size instead
-    fig.savefig(png_filename, dpi=200, facecolor='white', bbox_inches=None)
-
-    # PDF for infinite zoom quality - same issue with bbox_inches
-    fig.savefig(pdf_filename, format='pdf', facecolor='white', bbox_inches=None)
-
-    print(f"[Saved] Both files saved successfully")
-
-    total_time = time.time() - total_start
-    print(f"\n[TOTAL RUNTIME: {total_time:.2f}s]")
-    print("\nDone! Close the plot window to exit.")
-
-    fig.show()
-
-
-if __name__ == "__main__":
-    main()
 

@@ -1,4 +1,5 @@
 import os
+import random
 import re
 import pickle
 import traceback
@@ -11,7 +12,7 @@ import face_recognition
 from PIL import Image, ImageDraw, ImageFont
 
 # Import map generation from face_map
-from face_map import generate_and_save_map
+from face_map import generate_and_save_map, load_celeb_faces_cached
 
 # Load environment variables
 load_dotenv()
@@ -24,7 +25,6 @@ FACES_DIR = Path("stored_faces")
 FACES_DATA_FILE = FACES_DIR / "faces_data.pkl"
 
 # Celeb faces paths
-CELEBS_DIR = Path("celebs_images")
 celeb_faces_cache = {}  # {celeb_name: {"encoding": encoding, "image_path": path}}
 
 # Conversation states
@@ -76,7 +76,6 @@ async def download_file_with_retry(bot, file_id: str, dest_path: Path, max_retri
             else:
                 print(f"Download failed after {max_retries} attempts")
                 raise
-    return False
 
 
 def load_known_faces() -> dict:
@@ -115,13 +114,6 @@ def reset_all_faces():
         # Delete from stored_faces directory
         for file in FACES_DIR.glob("*.png"):
             file.unlink()
-        # Also delete from faces directory (legacy location)
-        faces_legacy = Path("faces")
-        if faces_legacy.exists():
-            for file in faces_legacy.glob("*.png"):
-                file.unlink()
-            for file in faces_legacy.glob("*.jpg"):
-                file.unlink()
         # Invalidate map caches so map regenerates without old faces
         try:
             tsne_cache = FACES_DIR / "tsne_cache.pkl"
@@ -130,9 +122,6 @@ def reset_all_faces():
             map_cache = FACES_DIR / "map_cache.pkl"
             if map_cache.exists():
                 map_cache.unlink()
-            temp_map = FACES_DIR / "temp_map.png"
-            if temp_map.exists():
-                temp_map.unlink()
             # Also clear legacy cache locations
             for cache_file in ["tsne_cache.pkl", "map_cache.pkl"]:
                 legacy_cache = Path(cache_file)
@@ -144,135 +133,6 @@ def reset_all_faces():
         pass
 
 
-def load_celeb_faces():
-    """Load all valid celeb faces from the celebs_images folder.
-    Each subfolder is a celeb name. All valid images (with exactly one face) are loaded.
-    Uses persistent caching to avoid recomputing encodings on subsequent runs.
-    Only loads if the cache is empty. Use this to initialize or reinitialize the cache.
-    """
-    global celeb_faces_cache
-    
-    # Only load if cache is empty (don't reload if already populated)
-    if celeb_faces_cache:
-        print(f"Celeb cache already loaded with {len(celeb_faces_cache)} celebs, skipping reload")
-        return celeb_faces_cache
-    
-    celeb_faces_cache = {}
-    
-    if not CELEBS_DIR.exists():
-        print(f"Celebs directory does not exist: {CELEBS_DIR}")
-        return celeb_faces_cache
-    
-    # Persistent cache file path
-    cache_file = FACES_DIR / "celeb_encodings_cache.pkl"
-    
-    # Try to load from persistent cache
-    cached_data = {}
-    if cache_file.exists():
-        try:
-            with open(cache_file, 'rb') as f:
-                cached_data = pickle.load(f)
-            print(f"Loaded {len(cached_data)} celebs from persistent cache")
-        except Exception as e:
-            print(f"Could not load cache file: {e}")
-            cached_data = {}
-    
-    # Image extensions to look for
-    image_extensions = {'.jpg', '.jpeg', '.png'}
-    
-    # Track modified entries for cache update
-    updated_cache = {}
-    new_encodings_count = 0
-    
-    # Iterate through each celeb subfolder
-    for celeb_folder in CELEBS_DIR.iterdir():
-        if celeb_folder.is_dir():
-            celeb_name = celeb_folder.name.replace('_', ' ').title()
-            
-            # Find all images in the celeb folder
-            celeb_images = [f for f in celeb_folder.iterdir() if f.suffix.lower() in image_extensions]
-            
-            if not celeb_images:
-                print(f"No images found for celeb: {celeb_name}")
-                continue
-            
-            # Load all valid images (exactly one face)
-            valid_images = []
-            for img_path in celeb_images:
-                try:
-                    # Check if we have a valid cached entry for this image
-                    img_key = str(img_path)
-                    current_mtime = img_path.stat().st_mtime
-                    
-                    cached_entry = cached_data.get(celeb_name, {}).get(img_key)
-                    use_cached = False
-                    
-                    if cached_entry and cached_entry.get('mtime') == current_mtime:
-                        # Use cached encoding if mtime matches
-                        valid_images.append({
-                            "encoding": cached_entry['encoding'],
-                            "image_path": img_path
-                        })
-                        use_cached = True
-                    
-                    if not use_cached:
-                        # Compute encoding
-                        image = face_recognition.load_image_file(img_path)
-                        encodings = face_recognition.face_encodings(image)
-                        
-                        # Only include images with exactly one face
-                        if len(encodings) == 1:
-                            valid_images.append({
-                                "encoding": encodings[0],
-                                "image_path": img_path
-                            })
-                            new_encodings_count += 1
-                            # Update cache entry
-                            if celeb_name not in updated_cache:
-                                updated_cache[celeb_name] = {}
-                            updated_cache[celeb_name][img_key] = {
-                                'encoding': encodings[0],
-                                'mtime': current_mtime
-                            }
-                        elif len(encodings) > 1:
-                            print(f"Skipping {img_path}: multiple faces found")
-                        else:
-                            print(f"Skipping {img_path}: no face found")
-                except Exception as e:
-                    print(f"Error loading {img_path}: {e}")
-            
-            if valid_images:
-                celeb_faces_cache[celeb_name] = valid_images
-                print(f"Loaded celeb: {celeb_name} with {len(valid_images)} valid images")
-            else:
-                print(f"No valid images for celeb: {celeb_name}")
-    
-    # Save updated cache
-    if updated_cache:
-        # Merge with existing cached data (preserve unchanged entries)
-        for celeb_name, img_entries in cached_data.items():
-            if celeb_name not in updated_cache:
-                updated_cache[celeb_name] = img_entries
-            else:
-                for img_key, entry in img_entries.items():
-                    if img_key not in updated_cache[celeb_name]:
-                        updated_cache[celeb_name][img_key] = entry
-        
-        try:
-            cache_file.parent.mkdir(exist_ok=True)
-            with open(cache_file, 'wb') as f:
-                pickle.dump(updated_cache, f)
-            print(f"Saved {len(updated_cache)} celebs to persistent cache")
-        except Exception as e:
-            print(f"Could not save cache file: {e}")
-    
-    total_images = sum(len(v) for v in celeb_faces_cache.values())
-    print(f"Total celebs loaded: {len(celeb_faces_cache)} with {total_images} total images")
-    if new_encodings_count > 0:
-        print(f"Computed {new_encodings_count} new encodings")
-    return celeb_faces_cache
-
-
 def find_most_similar_celeb(face_encoding):
     """Find the most similar celeb to the given face encoding.
     
@@ -281,7 +141,7 @@ def find_most_similar_celeb(face_encoding):
     global celeb_faces_cache
     
     if not celeb_faces_cache:
-        load_celeb_faces()
+        celeb_faces_cache = load_celeb_faces_cached()
     
     if not celeb_faces_cache:
         return None, None, float('inf')
@@ -311,7 +171,6 @@ def get_random_celebrities(exclude_name: str, count: int) -> list:
     if len(available) < count:
         return available
     
-    import random
     return random.sample(available, count)
 
 
@@ -405,6 +264,14 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
+async def send_main_menu(update: Update):
+    """Send the main menu prompt with keyboard."""
+    await update.message.reply_text(
+        "👇 Choose an option from the main menu:",
+        reply_markup=get_main_keyboard()
+    )
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /start command and show the custom keyboard."""
     load_known_faces()
@@ -417,6 +284,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle main menu button choices."""
+    global celeb_faces_cache
     text = update.message.text
     
     if text == "Add face":
@@ -429,10 +297,7 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(
                 "🚫 No faces stored yet. Please add a face first."
             )
-            await update.message.reply_text(
-                "👇 Choose an option from the main menu:",
-                reply_markup=get_main_keyboard()
-            )
+            await send_main_menu(update)
             return MAIN_MENU
         await update.message.reply_text(
             "👁️ Upload an image with at least one face and I will recognize who is in this image"
@@ -442,15 +307,12 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif text == "Similar celebs":
         # Load celeb faces only if cache is empty
         if not celeb_faces_cache:
-            load_celeb_faces()
+            celeb_faces_cache = load_celeb_faces_cached()
         if not celeb_faces_cache:
             await update.message.reply_text(
                 "🚫 No celeb faces available. Please check the celebs_images folder."
             )
-            await update.message.reply_text(
-                "👇 Choose an option from the main menu:",
-                reply_markup=get_main_keyboard()
-            )
+            await send_main_menu(update)
             return MAIN_MENU
         await update.message.reply_text(
             "🌟 Upload me a picture of a single person and I will find which celebs are similar to that person"
@@ -460,19 +322,15 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif text == "Guess the Celeb":
         # Load celeb faces only if cache is empty
         if not celeb_faces_cache:
-            load_celeb_faces()
+            celeb_faces_cache = load_celeb_faces_cached()
         if not celeb_faces_cache:
             await update.message.reply_text(
                 "🚫 No celeb faces available. Please check the celebs_images folder."
             )
-            await update.message.reply_text(
-                "👇 Choose an option from the main menu:",
-                reply_markup=get_main_keyboard()
-            )
+            await send_main_menu(update)
             return MAIN_MENU
         
         # Start the guessing game
-        import random
         celeb_name = random.choice(list(celeb_faces_cache.keys()))
         celeb_data = random.choice(celeb_faces_cache[celeb_name])
         image_path = str(celeb_data["image_path"])
@@ -575,10 +433,7 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "⚠️ Sorry, an error occurred while generating the map."
             )
         
-        await update.message.reply_text(
-            "👇 Choose an option from the main menu:",
-            reply_markup=get_main_keyboard()
-        )
+        await send_main_menu(update)
         return MAIN_MENU
         
     elif text == "Reset faces":
@@ -586,17 +441,11 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             "♻️ All faces have been deleted. The bot now knows no one."
         )
-        await update.message.reply_text(
-            "👇 Choose an option from the main menu:",
-            reply_markup=get_main_keyboard()
-        )
+        await send_main_menu(update)
         return MAIN_MENU
         
     else:
-        await update.message.reply_text(
-            "👇 Choose an option from the main menu:",
-            reply_markup=get_main_keyboard()
-        )
+        await send_main_menu(update)
         return MAIN_MENU
 
 
@@ -706,16 +555,17 @@ async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Clean up temp file
             if temp_path.exists():
                 temp_path.unlink(missing_ok=True)
-            context.user_data.pop('temp_encoding', None)
-            context.user_data.pop('temp_image_path', None)
-            context.user_data.pop('temp_face_location', None)
-            await update.message.reply_text(
-                "👇 Choose an option from the main menu:",
-                reply_markup=get_main_keyboard()
-            )
+            
+            await send_main_menu(update)
             return MAIN_MENU
         else:
-            # 4. Same face, different name - update the name
+            # 4. Same face, different name - check if new name already exists
+            normalized_existing = {existing.strip().lower(): existing for existing in known_faces.keys()}
+            if normalized_name in normalized_existing and normalized_existing[normalized_name] != existing_name:
+                await update.message.reply_text("❗ This name already exists. Please choose a different name.")
+                return WAITING_FOR_NAME
+            
+            # Safe to rename
             old_name = existing_name
             known_faces[name] = known_faces.pop(old_name)
             
@@ -750,10 +600,7 @@ async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('temp_face_location', None)
             
             await update.message.reply_text(f"✅ This face already exists as {old_name}. I updated the name to {name}.")
-            await update.message.reply_text(
-                "👇 Choose an option from the main menu:",
-                reply_markup=get_main_keyboard()
-            )
+            await send_main_menu(update)
             return MAIN_MENU
 
     # Face is new - check if name already exists
@@ -824,10 +671,7 @@ async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('temp_face_location', None)
     
     await update.message.reply_text("✅ Great! I will now remember this face")
-    await update.message.reply_text(
-        "👇 Choose an option from the main menu:",
-        reply_markup=get_main_keyboard()
-    )
+    await send_main_menu(update)
     return MAIN_MENU
 
 
@@ -932,10 +776,7 @@ async def handle_recognize_image(update: Update, context: ContextTypes.DEFAULT_T
                 caption=message
             )
         
-        await update.message.reply_text(
-            "👇 Choose an option from the main menu:",
-            reply_markup=get_main_keyboard()
-        )
+        await send_main_menu(update)
         
         temp_path.unlink(missing_ok=True)
         output_path.unlink(missing_ok=True)
@@ -1026,10 +867,7 @@ async def handle_similar_celeb_image(update: Update, context: ContextTypes.DEFAU
                 f"The celeb that the person is most similar to is {best_celeb}"
             )
         
-        await update.message.reply_text(
-            "👇 Choose an option from the main menu:",
-            reply_markup=get_main_keyboard()
-        )
+        await send_main_menu(update)
         
         return MAIN_MENU
         
@@ -1050,10 +888,8 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     guess = update.message.text.strip()
     
     if user_id not in guess_the_celeb_games:
-        await update.message.reply_text(
-            "No active game. 👇 Choose an option from the main menu:",
-            reply_markup=get_main_keyboard()
-        )
+        await update.message.reply_text("No active game.")
+        await send_main_menu(update)
         return MAIN_MENU
     
     game = guess_the_celeb_games[user_id]
@@ -1078,10 +914,7 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Clean up game state
         del guess_the_celeb_games[user_id]
         
-        await update.message.reply_text(
-            "👇 Choose an option from the main menu:",
-            reply_markup=get_main_keyboard()
-        )
+        await send_main_menu(update)
         return MAIN_MENU
     
     # Wrong guess
@@ -1097,7 +930,6 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stage_options_count = {2: 3, 3: 1}  # 3 others for stage 2 (total 4), 1 other for stage 3 (total 2)
         other_celebs = get_random_celebrities(correct_name, stage_options_count.get(next_stage, 1))
         options = [correct_name] + other_celebs
-        import random
         random.shuffle(options)
         game["options"] = options
         
@@ -1148,19 +980,13 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Clean up game state
         del guess_the_celeb_games[user_id]
         
-        await update.message.reply_text(
-            "Choose an option from the main menu:",
-            reply_markup=get_main_keyboard()
-        )
+        await send_main_menu(update)
         return MAIN_MENU
 
 
 async def invalid_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle invalid inputs by showing the main menu."""
-    await update.message.reply_text(
-        "👇 Choose an option from the main menu:",
-        reply_markup=get_main_keyboard()
-    )
+    await send_main_menu(update)
     return MAIN_MENU
 
 
