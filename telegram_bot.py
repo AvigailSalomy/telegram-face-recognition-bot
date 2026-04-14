@@ -984,6 +984,16 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
 
 
+async def handle_name_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle a photo sent while waiting for a name."""
+    await update.message.reply_text(
+        "📛 Right now I'm waiting for a name for the previous image.\n"
+        "Please type the person's name.\n\n"
+        "If you want to use a different image, press 'Add face' and upload a new one."
+    )
+    return WAITING_FOR_NAME
+
+
 async def invalid_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle invalid inputs by showing the main menu."""
     await send_main_menu(update)
@@ -1012,6 +1022,7 @@ def main():
             ],
             WAITING_FOR_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name_input),
+                MessageHandler(filters.PHOTO, handle_name_photo),
                 MessageHandler(filters.ALL, invalid_input_handler)
             ],
             WAITING_FOR_RECOGNIZE_IMAGE: [
