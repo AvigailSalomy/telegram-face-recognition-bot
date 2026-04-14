@@ -329,49 +329,80 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             await send_main_menu(update)
             return MAIN_MENU
-        
-        # Start the guessing game
-        celeb_name = random.choice(list(celeb_faces_cache.keys()))
-        celeb_data = random.choice(celeb_faces_cache[celeb_name])
-        image_path = str(celeb_data["image_path"])
-        
+
+        MIN_CROP_SIZE = 120
+        MAX_ATTEMPTS = 5
+        user_id = update.effective_user.id
+        sent_photo = False
+
+        all_celebs = list(celeb_faces_cache.keys())
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            celeb_name = random.choice(all_celebs)
+            celeb_data = random.choice(celeb_faces_cache[celeb_name])
+            image_path = str(celeb_data["image_path"])
+
+            print(f"[GuessCeleb] Attempt {attempt}/{MAX_ATTEMPTS} — celeb: {celeb_name}, image: {image_path}")
+
+            # Try stage 1 crop, fall back to stage 2 if too small
+            cropped_path = crop_face_for_stage(image_path, 1)
+            try:
+                with Image.open(cropped_path) as img:
+                    w, h = img.size
+                if w < MIN_CROP_SIZE or h < MIN_CROP_SIZE:
+                    print(f"[GuessCeleb] Stage 1 crop too small ({w}x{h}), retrying with stage 2")
+                    cropped_path = crop_face_for_stage(image_path, 2)
+                    with Image.open(cropped_path) as img:
+                        w, h = img.size
+                    print(f"[GuessCeleb] Stage 2 crop size: {w}x{h}")
+            except Exception as e:
+                print(f"[GuessCeleb] Could not validate crop size: {e}. Skipping to next celeb.")
+                continue
+
+            # Try sending the photo; retry with stage 2 once, then try a new celeb
+            for send_attempt, path in enumerate([cropped_path, crop_face_for_stage(image_path, 2)], start=1):
+                try:
+                    with open(path, "rb") as photo_file:
+                        await update.message.reply_photo(
+                            photo=photo_file,
+                            caption="🎮 Stage 1 of 3: Who is this celebrity? (You get 6 options)"
+                        )
+                    sent_photo = True
+                    break
+                except Exception as e:
+                    print(f"[GuessCeleb] Send attempt {send_attempt} failed for {celeb_name}: {e}")
+                    if send_attempt == 1:
+                        print(f"[GuessCeleb] Retrying send with stage 2 crop…")
+
+            if sent_photo:
+                break
+            print(f"[GuessCeleb] Both send attempts failed for {celeb_name}. Picking a new celeb.")
+
+        if not sent_photo:
+            print("[GuessCeleb] All attempts exhausted — falling back to text-only message.")
+            await update.message.reply_text("I see a face, but who is it? Pick one!")
+
         # Get 5 other celebs as options
         other_celebs = get_random_celebrities(celeb_name, 5)
         options = [celeb_name] + other_celebs
         random.shuffle(options)
-        
+
         # Store game state
-        user_id = update.effective_user.id
         guess_the_celeb_games[user_id] = {
             "celeb_name": celeb_name,
             "image_path": image_path,
             "stage": 1,
             "options": options
         }
-        
-        # Get cropped image for stage 1
-        cropped_path = crop_face_for_stage(image_path, 1)
-        
-        # Create keyboard with options
+
+        # Send choice keyboard
         keyboard = [[KeyboardButton(name)] for name in options]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-        
-        # Send game image and options
-        try:
-            with open(cropped_path, "rb") as photo_file:
-                await update.message.reply_photo(
-                    photo=photo_file,
-                    caption="🎮 Stage 1 of 3: Who is this celebrity? (You get 6 options)"
-                )
-        except Exception as e:
-            print(f"Error sending game image: {e}")
-            await update.message.reply_text("I see a face, but who is it? Pick one!")
-        
         await update.message.reply_text(
             "👇 Choose your answer:",
             reply_markup=reply_markup
         )
-        
+
         return WAITING_FOR_GUESS
         
     elif text == "Map":
