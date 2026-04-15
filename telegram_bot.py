@@ -330,10 +330,12 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await send_main_menu(update)
             return MAIN_MENU
 
-        MIN_CROP_SIZE = 120
-        MAX_ATTEMPTS = 5
+        MIN_CROP_SIZE = 80
+        MAX_ATTEMPTS = 25
         user_id = update.effective_user.id
         sent_photo = False
+        celeb_name = None
+        image_path = None
 
         all_celebs = list(celeb_faces_cache.keys())
 
@@ -344,43 +346,37 @@ async def handle_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             print(f"[GuessCeleb] Attempt {attempt}/{MAX_ATTEMPTS} — celeb: {celeb_name}, image: {image_path}")
 
-            # Try stage 1 crop, fall back to stage 2 if too small
+            # Generate a true Stage 1 crop — never fall back to stage 2 here
             cropped_path = crop_face_for_stage(image_path, 1)
             try:
                 with Image.open(cropped_path) as img:
                     w, h = img.size
                 if w < MIN_CROP_SIZE or h < MIN_CROP_SIZE:
-                    print(f"[GuessCeleb] Stage 1 crop too small ({w}x{h}), retrying with stage 2")
-                    cropped_path = crop_face_for_stage(image_path, 2)
-                    with Image.open(cropped_path) as img:
-                        w, h = img.size
-                    print(f"[GuessCeleb] Stage 2 crop size: {w}x{h}")
+                    print(f"[GuessCeleb] Stage 1 crop too small ({w}x{h}) — picking a new celeb.")
+                    continue
             except Exception as e:
-                print(f"[GuessCeleb] Could not validate crop size: {e}. Skipping to next celeb.")
+                print(f"[GuessCeleb] Could not validate Stage 1 crop: {e} — picking a new celeb.")
                 continue
 
-            # Try sending the photo; retry with stage 2 once, then try a new celeb
-            for send_attempt, path in enumerate([cropped_path, crop_face_for_stage(image_path, 2)], start=1):
-                try:
-                    with open(path, "rb") as photo_file:
-                        await update.message.reply_photo(
-                            photo=photo_file,
-                            caption="🎮 Stage 1 of 3: Who is this celebrity? (You get 6 options)"
-                        )
-                    sent_photo = True
-                    break
-                except Exception as e:
-                    print(f"[GuessCeleb] Send attempt {send_attempt} failed for {celeb_name}: {e}")
-                    if send_attempt == 1:
-                        print(f"[GuessCeleb] Retrying send with stage 2 crop…")
-
-            if sent_photo:
+            # Try sending the Stage 1 crop — on failure pick a new celeb (never downgrade to stage 2)
+            try:
+                with open(cropped_path, "rb") as photo_file:
+                    await update.message.reply_photo(
+                        photo=photo_file,
+                        caption="🎮 Stage 1 of 3: Who is this celebrity? (You get 6 options)"
+                    )
+                sent_photo = True
                 break
-            print(f"[GuessCeleb] Both send attempts failed for {celeb_name}. Picking a new celeb.")
+            except Exception as e:
+                print(f"[GuessCeleb] Failed to send Stage 1 image for {celeb_name}: {e} — picking a new celeb.")
 
         if not sent_photo:
-            print("[GuessCeleb] All attempts exhausted — falling back to text-only message.")
-            await update.message.reply_text("I see a face, but who is it? Pick one!")
+            print(f"[GuessCeleb] All {MAX_ATTEMPTS} attempts exhausted — aborting game.")
+            await update.message.reply_text(
+                "😔 Couldn't load a game image right now. Please try again!"
+            )
+            await send_main_menu(update)
+            return MAIN_MENU
 
         # Get 5 other celebs as options
         other_celebs = get_random_celebrities(celeb_name, 5)
